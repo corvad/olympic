@@ -180,6 +180,8 @@ go.uber.org/mock/mockgen/model
 golang.org/x/arch/x86/x86asm
 # golang.org/x/crypto v0.40.0
 ## explicit; go 1.23.0
+golang.org/x/crypto/bcrypt
+golang.org/x/crypto/blowfish
 golang.org/x/crypto/chacha20
 golang.org/x/crypto/chacha20poly1305
 golang.org/x/crypto/hkdf
