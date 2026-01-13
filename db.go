@@ -66,6 +66,7 @@ func OpenDB(sqliteDBPath string) (*DB, error) {
 	// Migrate the schema
 	db.AutoMigrate(&Account{}, &Login{})
 
+	
 	return &DB{
 		sqliteDBPath: sqliteDBPath,
 		DB:           db,
