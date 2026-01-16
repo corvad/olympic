@@ -27,13 +27,24 @@ func createLink(c *gin.Context) {
 	})
 }
 
+func getLink(c *gin.Context) {
+
+	c.Request.ParseForm()
+	url := c.Request.Form.Get("url")
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Link retrieved successfully",
+	})
+}
+
 func registerRoutes(r *gin.Engine) {
 	// Define a simple GET endpoint
 	r.POST("/createAccount", createAccount)
 	r.POST("/createLink", createLink)
+	r.GET("/getLink", getLink)
 }
 
-func main() {
+func Init() {
 	r := gin.Default()
 
 	// Define a simple GET endpoint
