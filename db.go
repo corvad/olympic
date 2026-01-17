@@ -2,7 +2,6 @@ package olympic
 
 import (
 	"fmt"
-	"os"
 	"time"
 
 	"gorm.io/driver/sqlite"
@@ -16,46 +15,36 @@ type DB struct {
 
 type Query struct {
 	gorm.Model
-	queriedBy uint // Account ID
+	LinkID    uint // Link ID
+	QueriedBy uint // Account ID
 }
 
 type Link struct {
 	gorm.Model
-	url     string
-	count   int
-	owner   Account
-	queries []uint // Click IDs of clicks on this link
+	Url   string
+	Count int
+	Owner uint
 }
 
 type Login struct {
 	gorm.Model
-	accountID uint
-	timestamp time.Time
-	ipAddress string
-	userAgent string
+	AccountID    uint
+	IpAddress    string
+	UserAgent    string
+	RefreshToken string
+	ExpiresAt    time.Time
 }
 
 type Account struct {
 	gorm.Model
-	email    string
-	verified bool
-	password string
-	logins   []uint // login IDs
+	Email    string
+	Verified bool
+	Password string
 }
 
 func OpenDB(sqliteDBPath string) (*DB, error) {
 	if sqliteDBPath == "" {
 		return nil, fmt.Errorf("sqliteDBPath cannot be empty")
-	}
-
-	//check if db already exists
-	file, err := os.Stat(sqliteDBPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to stat database file: %w", err)
-	}
-
-	if file.IsDir() {
-		return nil, fmt.Errorf("the provided sqliteDBPath is a directory, not a file")
 	}
 
 	db, err := gorm.Open(sqlite.Open(sqliteDBPath), &gorm.Config{})
@@ -64,9 +53,11 @@ func OpenDB(sqliteDBPath string) (*DB, error) {
 	}
 
 	// Migrate the schema
-	db.AutoMigrate(&Account{}, &Login{})
+	err = db.AutoMigrate(&Account{}, &Login{}, &Link{}, &Query{})
+	if err != nil {
+		return nil, err
+	}
 
-	
 	return &DB{
 		sqliteDBPath: sqliteDBPath,
 		DB:           db,
