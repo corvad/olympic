@@ -1,6 +1,7 @@
 package cascade
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,15 +12,34 @@ var accountManager *AccountManager
 var linkManager *LinkManager
 var mux *http.ServeMux
 
+type AccountRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type LinkRequest struct {
+	Url      string `json:"url"`
+	ShortUrl string `json:"shortUrl"`
+}
+
 func createAccount(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-	email := r.Form.Get("email")
-	password := r.Form.Get("password")
-	_, err := accountManager.CreateAccount(email, password)
+	if r.Method != http.MethodPost {
+		errorResponse(w, http.StatusMethodNotAllowed, fmt.Sprintf("CreateAccount Invalid Method: %s", r.Method))
+		return
+	}
+	var req AccountRequest
+	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"status":"error"}`))
-		log.Println("CreateAccount error:", err)
+		errorResponse(w, http.StatusBadRequest, fmt.Sprintf("CreateAccount JSON error: %v", err))
+		return
+	}
+	if req.Email == "" || req.Password == "" {
+		errorResponse(w, http.StatusBadRequest, "CreateAccount missing fields")
+		return
+	}
+	_, err = accountManager.CreateAccount(req.Email, req.Password)
+	if err != nil {
+		errorResponse(w, http.StatusConflict, fmt.Sprintf("CreateAccount error: %v", err))
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -27,31 +47,73 @@ func createAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 func login(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-	email := r.Form.Get("email")
-	password := r.Form.Get("password")
-	refreshToken, jwtToken, err := accountManager.Login(email, password)
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		w.Write([]byte(`{"status":"error"}`))
+		log.Println("Login method not allowed:", r.Method)
+		return
+	}
+	var req AccountRequest
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"status":"error"}`))
+		log.Println("Login JSON error:", err)
+		return
+	}
+	if req.Email == "" || req.Password == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"status":"error"}`))
+		log.Println("Login missing fields")
+		return
+	}
+	refreshToken, jwtToken, err := accountManager.Login(req.Email, req.Password)
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte(`{"status":"error"}`))
 		log.Println("Authentication error:", err)
 		return
 	}
+	cookie := &http.Cookie{
+		Name:     "refreshToken",
+		Value:    refreshToken,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		Path:     "/api",
+		MaxAge:   3600 * 24 * 7,
+	}
+	http.SetCookie(w, cookie)
+	w.Header().Set("Authorization", fmt.Sprintf("Bearer %s", jwtToken))
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"ok", "refreshToken":"` + refreshToken + `", "jwtToken":"` + jwtToken + `"}`))
+	w.Write([]byte(`{"status":"ok"}`))
 }
 
 func createLink(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-	accountID, err := checkJWTMiddleware(r)
-	if err != nil {
+	//get context accountID
+	accountID, ok := r.Context().Value("accountID").(uint)
+	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte(`{"status":"error"}`))
-		log.Println("JWT validation error:", err)
+		log.Println("CreateLink missing accountID in context")
 		return
 	}
-	url := r.Form.Get("url")
-	shortUrl := r.Form.Get("shortUrl")
+	var req LinkRequest
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"status":"error"}`))
+		log.Println("CreateLink JSON error:", err)
+		return
+	}
+	url := req.Url
+	shortUrl := req.ShortUrl
+	if url == "" || shortUrl == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"status":"error"}`))
+		log.Println("CreateLink missing fields")
+		return
+	}
 	err = linkManager.CreateLink(url, shortUrl, accountID)
 	statusCode := http.StatusBadRequest
 	if err == ErrShortUrlExists {
@@ -67,6 +129,7 @@ func createLink(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"ok", "url":"` + url + `", "shortUrl":"` + shortUrl + `"}`))
 }
 
+/*
 func getLink(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	_, err := checkJWTMiddleware(r)
@@ -86,35 +149,22 @@ func getLink(w http.ResponseWriter, r *http.Request) {
 	}
 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 }
-
-func refreshJWT(w http.ResponseWriter, r *http.Request) {
-	refreshToken := r.Header.Get("Token")
-	login, err := accountManager.ValidateRefreshToken(refreshToken)
-	if err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"status":"error"}`))
-		log.Println("RefreshJWT validation error:", err)
-		return
-	}
-	newJWT, err := accountManager.GenerateJWT(login.AccountID)
-	if err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"status":"error"}`))
-		log.Println("RefreshJWT error:", err)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"ok", "jwtToken":"` + newJWT + `"}`))
-}
+*/
 
 func logout(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-	refreshToken := r.Form.Get("refreshToken")
-	login, err := accountManager.ValidateRefreshToken(refreshToken)
+	// Invalidate the refresh token
+	cookie, err := r.Cookie("refreshToken")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"status":"error"}`))
+		log.Println("Logout missing cookie:", err)
+		return
+	}
+	login, err := accountManager.ValidateRefreshToken(cookie.Value)
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte(`{"status":"error"}`))
-		log.Println("Logout error:", err)
+		log.Println("Logout invalid cookie token:", err)
 		return
 	}
 	err = accountManager.Logout(login)
@@ -124,35 +174,27 @@ func logout(w http.ResponseWriter, r *http.Request) {
 		log.Println("Logout error:", err)
 		return
 	}
+	cookie = &http.Cookie{
+		Name:     "refreshToken",
+		Value:    "",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		Path:     "/api",
+		MaxAge:   -1,
+	}
+	http.SetCookie(w, cookie)
+	w.Header().Set("Authorization: ", "")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok"}`))
-}
-
-func checkJWTMiddleware(r *http.Request) (uint, error) {
-	jwtToken := r.Form.Get("jwtToken")
-	accountID, err := accountManager.ValidateJWT(jwtToken)
-	if err != nil {
-		log.Println("JWT validation error:", err)
-		return 0, err
-	}
-	return accountID, nil
-}
-
-func logRequest(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		address := r.Header.Get("X-Forwarded-For")
-		log.Printf("%s %s %s", address, r.Method, r.URL)
-		h.ServeHTTP(w, r)
-	})
 }
 
 func registerRoutes() {
 	mux.HandleFunc("/api/auth/createAccount", createAccount)
 	mux.HandleFunc("/api/auth/login", login)
-	mux.HandleFunc("/api/auth/createLink", createLink)
-	mux.HandleFunc("/api/getLink", getLink)
-	mux.HandleFunc("/api/auth/refreshJWT", refreshJWT)
-	mux.HandleFunc("/api/auth/logout", logout)
+	mux.HandleFunc("/api/createLink", authMiddleware(createLink, http.MethodPost))
+	//mux.HandleFunc("/api/getLink", authMiddleware(getLink, http.MethodPost))
+	mux.HandleFunc("/api/auth/logout", authMiddleware(logout, http.MethodPost))
 
 }
 
@@ -171,7 +213,7 @@ func Init(dbName string, jwtSigningSecret string) {
 
 func Run(port int) {
 	log.Printf("Starting server on port %d...", port)
-	loggedMux := logRequest(mux)
+	loggedMux := loggingMiddleware(mux)
 	err := http.ListenAndServe(":"+fmt.Sprintf("%d", port), loggedMux)
 	if err != nil {
 		log.Fatalf("Failed to start server: %v", err)
