@@ -35,4 +35,4 @@ go.work.sum
 *.db
 
 # Add binary file
-olympic
+cascade

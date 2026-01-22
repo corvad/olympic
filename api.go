@@ -1,157 +1,135 @@
-package olympic
+package cascade
 
 import (
 	"fmt"
 	"log"
 	"net/http"
-
-	"github.com/gin-gonic/gin"
 )
 
 var database *DB
 var accountManager *AccountManager
 var linkManager *LinkManager
+var mux *http.ServeMux
 
-func createAccount(c *gin.Context) {
-	c.Request.ParseForm()
-	email := c.Request.Form.Get("email")
-	password := c.Request.Form.Get("password")
+func createAccount(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	email := r.Form.Get("email")
+	password := r.Form.Get("password")
 	_, err := accountManager.CreateAccount(email, password)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status": "error",
-		})
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"status":"error"}`))
 		log.Println("CreateAccount error:", err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"status": "ok",
-	})
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"ok"}`))
 }
 
-func login(c *gin.Context) {
-	c.Request.ParseForm()
-	email := c.Request.Form.Get("email")
-	password := c.Request.Form.Get("password")
+func login(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	email := r.Form.Get("email")
+	password := r.Form.Get("password")
 	refreshToken, jwtToken, err := accountManager.Login(email, password)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-		})
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"status":"error"}`))
 		log.Println("Authentication error:", err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"status":       "ok",
-		"refreshToken": refreshToken, // Return refresh token
-		"jwtToken":     jwtToken,     // Return JWT token
-	})
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"ok", "refreshToken":"` + refreshToken + `", "jwtToken":"` + jwtToken + `"}`))
 }
 
-func createLink(c *gin.Context) {
-	c.Request.ParseForm()
-	accountID, err := checkJWTMiddleware(c)
+func createLink(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	accountID, err := checkJWTMiddleware(r)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-		})
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"status":"error"}`))
 		log.Println("JWT validation error:", err)
 		return
 	}
-	url := c.Request.Form.Get("url")
-	shortUrl := c.Request.Form.Get("shortUrl")
+	url := r.Form.Get("url")
+	shortUrl := r.Form.Get("shortUrl")
 	err = linkManager.CreateLink(url, shortUrl, accountID)
 	statusCode := http.StatusBadRequest
 	if err == ErrShortUrlExists {
 		statusCode = http.StatusConflict
 	}
 	if err != nil {
-		c.JSON(statusCode, gin.H{
-			"status": "error",
-		})
+		w.WriteHeader(statusCode)
+		w.Write([]byte(`{"status":"error"}`))
 		log.Println("CreateLink error:", err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"status":   "ok",
-		"url":      url,
-		"shortUrl": shortUrl,
-	})
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"ok", "url":"` + url + `", "shortUrl":"` + shortUrl + `"}`))
 }
 
-func getLink(c *gin.Context) {
-	c.Request.ParseForm()
-	_, err := checkJWTMiddleware(c)
+func getLink(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	_, err := checkJWTMiddleware(r)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-		})
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"status":"error"}`))
 		log.Println("JWT validation error:", err)
 		return
 	}
-	shortUrl := c.Request.Form.Get("shortUrl")
+	shortUrl := r.Form.Get("shortUrl")
 	url, err := linkManager.GetLink(shortUrl)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status": "error",
-		})
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"status":"error"}`))
 		log.Println("GetLink error:", err)
 		return
 	}
-	c.Redirect(http.StatusTemporaryRedirect, url)
+	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 }
 
-func refreshJWT(c *gin.Context) {
-	c.Request.ParseForm()
-	refreshToken := c.Request.Form.Get("refreshToken")
+func refreshJWT(w http.ResponseWriter, r *http.Request) {
+	refreshToken := r.Header.Get("Token")
 	login, err := accountManager.ValidateRefreshToken(refreshToken)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-		})
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"status":"error"}`))
 		log.Println("RefreshJWT validation error:", err)
 		return
 	}
 	newJWT, err := accountManager.GenerateJWT(login.AccountID)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-		})
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"status":"error"}`))
 		log.Println("RefreshJWT error:", err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"status":   "ok",
-		"jwtToken": newJWT,
-	})
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"ok", "jwtToken":"` + newJWT + `"}`))
 }
 
-func logout(c *gin.Context) {
-	c.Request.ParseForm()
-	refreshToken := c.Request.Form.Get("refreshToken")
+func logout(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	refreshToken := r.Form.Get("refreshToken")
 	login, err := accountManager.ValidateRefreshToken(refreshToken)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-		})
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"status":"error"}`))
 		log.Println("Logout error:", err)
 		return
 	}
 	err = accountManager.Logout(login)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-		})
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"status":"error"}`))
 		log.Println("Logout error:", err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"status": "ok",
-	})
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"ok"}`))
 }
 
-func checkJWTMiddleware(c *gin.Context) (uint, error) {
-	jwtToken := c.Request.Form.Get("jwtToken")
+func checkJWTMiddleware(r *http.Request) (uint, error) {
+	jwtToken := r.Form.Get("jwtToken")
 	accountID, err := accountManager.ValidateJWT(jwtToken)
 	if err != nil {
 		log.Println("JWT validation error:", err)
@@ -160,14 +138,22 @@ func checkJWTMiddleware(c *gin.Context) (uint, error) {
 	return accountID, nil
 }
 
-func registerRoutes(r *gin.Engine) {
-	// Define a simple GET endpoint
-	r.GET("/api/createAccount", createAccount)
-	r.GET("/api/createLink", createLink)
-	r.GET("/api/getLink", getLink)
-	r.GET("/api/login", login)
-	r.GET("/api/refreshJWT", refreshJWT)
-	r.GET("/api/logout", logout)
+func logRequest(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		address := r.Header.Get("X-Forwarded-For")
+		log.Printf("%s %s %s", address, r.Method, r.URL)
+		h.ServeHTTP(w, r)
+	})
+}
+
+func registerRoutes() {
+	mux.HandleFunc("/api/auth/createAccount", createAccount)
+	mux.HandleFunc("/api/auth/login", login)
+	mux.HandleFunc("/api/auth/createLink", createLink)
+	mux.HandleFunc("/api/getLink", getLink)
+	mux.HandleFunc("/api/auth/refreshJWT", refreshJWT)
+	mux.HandleFunc("/api/auth/logout", logout)
+
 }
 
 func Init(dbName string, jwtSigningSecret string) {
@@ -179,16 +165,17 @@ func Init(dbName string, jwtSigningSecret string) {
 	log.Println("Connected to Database:", dbName)
 	accountManager = &AccountManager{db: database.DB, jwtSigningSecret: jwtSigningSecret}
 	linkManager = &LinkManager{db: database.DB}
+	mux = http.NewServeMux()
+	registerRoutes()
 }
 
 func Run(port int) {
-	// Set Gin to release mode to disable debug output
-	gin.SetMode(gin.ReleaseMode)
-
-	r := gin.Default()
-	registerRoutes(r)
 	log.Printf("Starting server on port %d...", port)
-	r.Run(":" + fmt.Sprintf("%d", port))
+	loggedMux := logRequest(mux)
+	err := http.ListenAndServe(":"+fmt.Sprintf("%d", port), loggedMux)
+	if err != nil {
+		log.Fatalf("Failed to start server: %v", err)
+	}
 }
 
 func Shutdown() {

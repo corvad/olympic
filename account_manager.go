@@ -1,4 +1,4 @@
-package olympic
+package cascade
 
 import (
 	"crypto/rand"
