@@ -16,8 +16,13 @@ import (
 var ErrExpiredJWT = fmt.Errorf("JWT has expired")
 
 type AccountManager struct {
-	db               *gorm.DB
+	db               *DB
+	kv               *KVStore
 	jwtSigningSecret string
+}
+
+func NewAccountManager(db *DB, kv *KVStore, jwtSigningSecret string) *AccountManager {
+	return &AccountManager{db: db, kv: kv, jwtSigningSecret: jwtSigningSecret}
 }
 
 func (am *AccountManager) CreateAccount(email string, password string) (*Account, error) {
@@ -41,7 +46,7 @@ func (am *AccountManager) CreateAccount(email string, password string) (*Account
 		Verified: false,
 	}
 
-	result := am.db.Create(account)
+	result := am.db.DB.Create(account)
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -51,7 +56,7 @@ func (am *AccountManager) CreateAccount(email string, password string) (*Account
 
 func (am *AccountManager) GetAccountByEmail(email string) (*Account, error) {
 	var account = Account{Email: email}
-	result := am.db.First(&account)
+	result := am.db.DB.First(&account)
 	if result.Error == gorm.ErrRecordNotFound {
 		return nil, nil
 	}
@@ -85,7 +90,7 @@ func (am *AccountManager) Login(email string, password string) (string, string, 
 }
 
 func (am *AccountManager) RecordLogin(login Login) error {
-	result := am.db.Create(&login)
+	result := am.db.DB.Create(&login)
 	return result.Error
 }
 
@@ -138,7 +143,7 @@ func (am *AccountManager) ValidateRefreshToken(refreshToken string) (Login, erro
 		return Login{}, fmt.Errorf("invalid account id in token")
 	}
 
-	result := am.db.Where("account_id = ? AND expires_at > ?", accountID, time.Now()).Find(&logins)
+	result := am.db.DB.Where("account_id = ? AND expires_at > ?", accountID, time.Now()).Find(&logins)
 	if result.Error != nil {
 		return Login{}, fmt.Errorf("db query failed: %w", result.Error)
 	}
@@ -161,7 +166,7 @@ func (am *AccountManager) ChangePassword(accountID uint, newPassword string) err
 
 	newPassword = bcryptedPassword
 
-	result := am.db.Model(&Account{}).Where("id = ?", accountID).Update("password", newPassword)
+	result := am.db.DB.Model(&Account{}).Where("id = ?", accountID).Update("password", newPassword)
 	return result.Error
 }
 
@@ -171,7 +176,7 @@ func hash(s string) (string, error) {
 }
 
 func (am *AccountManager) Close() error {
-	sqlDB, err := am.db.DB()
+	sqlDB, err := am.db.DB.DB()
 	if err != nil {
 		return fmt.Errorf("failed to get db: %w", err)
 	}
@@ -183,7 +188,7 @@ func (am *AccountManager) Close() error {
 }
 
 func (am *AccountManager) Logout(login Login) error {
-	result := am.db.Delete(&Login{}, login.ID)
+	result := am.db.DB.Delete(&Login{}, login.ID)
 	if result.Error != nil {
 		return fmt.Errorf("failed to delete login: %w", result.Error)
 	}

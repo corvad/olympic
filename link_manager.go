@@ -7,14 +7,19 @@ import (
 )
 
 type LinkManager struct {
-	db *gorm.DB
+	db *DB
+	kv *KVStore
 }
 
 var ErrShortUrlExists = fmt.Errorf("shortUrl already exists")
 
+func NewLinkManager(db *DB, kv *KVStore) *LinkManager {
+	return &LinkManager{db: db, kv: kv}
+}
+
 func (lm *LinkManager) CreateLink(url string, shortUrl string, accountID uint) error {
 	link := &Link{}
-	result := lm.db.Where("short_url = ?", shortUrl).First(link)
+	result := lm.db.DB.Where("short_url = ?", shortUrl).First(link)
 	if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
 		return fmt.Errorf("db lookup failed: %w", result.Error)
 	}
@@ -25,7 +30,7 @@ func (lm *LinkManager) CreateLink(url string, shortUrl string, accountID uint) e
 	link.Owner = accountID
 	link.Count = 0
 	link.ShortUrl = shortUrl
-	result = lm.db.Create(link)
+	result = lm.db.DB.Create(link)
 	if result.Error != nil {
 		return fmt.Errorf("db create failed: %w", result.Error)
 	}
@@ -34,7 +39,7 @@ func (lm *LinkManager) CreateLink(url string, shortUrl string, accountID uint) e
 
 func (lm *LinkManager) GetLink(shortUrl string) (string, error) {
 	link := &Link{}
-	result := lm.db.Where("short_url = ?", shortUrl).First(link)
+	result := lm.db.DB.Where("short_url = ?", shortUrl).First(link)
 	if result.Error != nil {
 		return "", fmt.Errorf("db lookup failed: %w", result.Error)
 	}

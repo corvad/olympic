@@ -2,15 +2,20 @@ package cascade
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
+type DBConnection struct {
+	Address string
+}
+
 type DB struct {
-	sqliteDBPath string
-	DB           *gorm.DB
+	details DBConnection
+	DB      *gorm.DB
 }
 
 type Query struct {
@@ -43,12 +48,12 @@ type Account struct {
 	Password string
 }
 
-func OpenDB(sqliteDBPath string) (*DB, error) {
-	if sqliteDBPath == "" {
-		return nil, fmt.Errorf("sqliteDBPath cannot be empty")
+func NewDatabase(dbConn DBConnection) (*DB, error) {
+	if dbConn.Address == "" {
+		return nil, fmt.Errorf("dbConn.Address cannot be empty")
 	}
 
-	db, err := gorm.Open(sqlite.Open(sqliteDBPath), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(dbConn.Address), &gorm.Config{})
 	if err != nil {
 		return nil, err
 	}
@@ -59,20 +64,22 @@ func OpenDB(sqliteDBPath string) (*DB, error) {
 		return nil, err
 	}
 
+	log.Println("Database connected and migrated.")
+
 	return &DB{
-		sqliteDBPath: sqliteDBPath,
-		DB:           db,
+		details: dbConn,
+		DB:      db,
 	}, nil
 }
 
-func (db *DB) Close() error {
+func (db *DB) Close() {
 	sqlDB, err := db.DB.DB()
 	if err != nil {
-		return fmt.Errorf("failed to get db: %w", err)
+		log.Println("Error getting database object for closing: ", err)
 	}
 	err = sqlDB.Close()
 	if err != nil {
-		return fmt.Errorf("failed to close database: %w", err)
+		log.Println("Error closing database: ", err)
 	}
-	return nil
+	log.Println("Database connection closed.")
 }

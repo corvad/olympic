@@ -8,6 +8,7 @@ import (
 )
 
 var database *DB
+var keystore *KVStore
 var accountManager *AccountManager
 var linkManager *LinkManager
 var mux *http.ServeMux
@@ -20,6 +21,16 @@ type AccountRequest struct {
 type LinkRequest struct {
 	Url      string `json:"url"`
 	ShortUrl string `json:"shortUrl"`
+}
+
+var cookie = &http.Cookie{
+	Name:     "refreshToken",
+	Value:    "",
+	HttpOnly: true,
+	Secure:   true,
+	SameSite: http.SameSiteStrictMode,
+	Path:     "/",
+	MaxAge:   3600 * 24 * 7, // 7 days
 }
 
 func createAccount(w http.ResponseWriter, r *http.Request) {
@@ -48,41 +59,24 @@ func createAccount(w http.ResponseWriter, r *http.Request) {
 
 func login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		w.Write([]byte(`{"status":"error"}`))
-		log.Println("Login method not allowed:", r.Method)
+		errorResponse(w, http.StatusMethodNotAllowed, fmt.Sprintf("Login Invalid Method: %s", r.Method))
 		return
 	}
 	var req AccountRequest
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"status":"error"}`))
-		log.Println("Login JSON error:", err)
-		return
+		errorResponse(w, http.StatusBadRequest, "Login JSON error")
 	}
 	if req.Email == "" || req.Password == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"status":"error"}`))
-		log.Println("Login missing fields")
+		errorResponse(w, http.StatusBadRequest, "Login missing fields")
 		return
 	}
 	refreshToken, jwtToken, err := accountManager.Login(req.Email, req.Password)
 	if err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"status":"error"}`))
-		log.Println("Authentication error:", err)
+		errorResponse(w, http.StatusUnauthorized, "Login authentication error")
 		return
 	}
-	cookie := &http.Cookie{
-		Name:     "refreshToken",
-		Value:    refreshToken,
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-		Path:     "/api",
-		MaxAge:   3600 * 24 * 7,
-	}
+	cookie.Value = refreshToken
 	http.SetCookie(w, cookie)
 	w.Header().Set("Authorization", fmt.Sprintf("Bearer %s", jwtToken))
 	w.WriteHeader(http.StatusOK)
@@ -93,25 +87,19 @@ func createLink(w http.ResponseWriter, r *http.Request) {
 	//get context accountID
 	accountID, ok := r.Context().Value("accountID").(uint)
 	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"status":"error"}`))
-		log.Println("CreateLink missing accountID in context")
+		errorResponse(w, http.StatusUnauthorized, "CreateLink missing accountID in context")
 		return
 	}
 	var req LinkRequest
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"status":"error"}`))
-		log.Println("CreateLink JSON error:", err)
+		errorResponse(w, http.StatusBadRequest, "CreateLink JSON error")
 		return
 	}
 	url := req.Url
 	shortUrl := req.ShortUrl
 	if url == "" || shortUrl == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"status":"error"}`))
-		log.Println("CreateLink missing fields")
+		errorResponse(w, http.StatusBadRequest, "CreateLink missing fields")
 		return
 	}
 	err = linkManager.CreateLink(url, shortUrl, accountID)
@@ -120,93 +108,75 @@ func createLink(w http.ResponseWriter, r *http.Request) {
 		statusCode = http.StatusConflict
 	}
 	if err != nil {
-		w.WriteHeader(statusCode)
-		w.Write([]byte(`{"status":"error"}`))
-		log.Println("CreateLink error:", err)
+		errorResponse(w, statusCode, "CreateLink error")
 		return
 	}
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok", "url":"` + url + `", "shortUrl":"` + shortUrl + `"}`))
 }
 
-/*
 func getLink(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-	_, err := checkJWTMiddleware(r)
-	if err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"status":"error"}`))
-		log.Println("JWT validation error:", err)
+	_, ok := r.Context().Value("accountID").(uint)
+	if !ok {
+		errorResponse(w, http.StatusUnauthorized, "GetLink missing accountID in context")
 		return
 	}
-	shortUrl := r.Form.Get("shortUrl")
+	shortUrl := r.URL.Path[len("/getLink/"):]
 	url, err := linkManager.GetLink(shortUrl)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"status":"error"}`))
-		log.Println("GetLink error:", err)
+		errorResponse(w, http.StatusBadRequest, "GetLink error")
 		return
 	}
 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 }
-*/
 
 func logout(w http.ResponseWriter, r *http.Request) {
 	// Invalidate the refresh token
 	cookie, err := r.Cookie("refreshToken")
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"status":"error"}`))
-		log.Println("Logout missing cookie:", err)
+		errorResponse(w, http.StatusUnauthorized, "Logout missing token")
 		return
 	}
 	login, err := accountManager.ValidateRefreshToken(cookie.Value)
 	if err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"status":"error"}`))
-		log.Println("Logout invalid cookie token:", err)
+		errorResponse(w, http.StatusUnauthorized, "Logout invalid cookie token")
 		return
 	}
 	err = accountManager.Logout(login)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"status":"error"}`))
-		log.Println("Logout error:", err)
+		errorResponse(w, http.StatusInternalServerError, "Logout could not invalidate token")
 		return
 	}
-	cookie = &http.Cookie{
-		Name:     "refreshToken",
-		Value:    "",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-		Path:     "/api",
-		MaxAge:   -1,
-	}
+	cookie.MaxAge = -1 // Delete the cookie
 	http.SetCookie(w, cookie)
-	w.Header().Set("Authorization: ", "")
+	w.Header().Set("Authorization", "")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok"}`))
 }
 
 func registerRoutes() {
-	mux.HandleFunc("/api/auth/createAccount", createAccount)
-	mux.HandleFunc("/api/auth/login", login)
-	mux.HandleFunc("/api/createLink", authMiddleware(createLink, http.MethodPost))
-	//mux.HandleFunc("/api/getLink", authMiddleware(getLink, http.MethodPost))
-	mux.HandleFunc("/api/auth/logout", authMiddleware(logout, http.MethodPost))
-
+	mux.HandleFunc("/auth/createAccount", createAccount)
+	mux.HandleFunc("/auth/login", login)
+	mux.HandleFunc("/createLink", authMiddleware(createLink, http.MethodPost))
+	mux.HandleFunc("/getLink/", authMiddleware(getLink, http.MethodGet))
+	mux.HandleFunc("/auth/logout", authMiddleware(logout, http.MethodPost))
 }
 
-func Init(dbName string, jwtSigningSecret string) {
+func Init(db DBConnection, kv KVConnection, jwtSigningSecret string) {
 	var err error
-	database, err = OpenDB(dbName)
+	database, err = NewDatabase(db)
 	if err != nil {
-		log.Panicf("failed to connect database: %v", err)
+		log.Fatalf("Failed to initialize database: %v", err)
 	}
-	log.Println("Connected to Database:", dbName)
-	accountManager = &AccountManager{db: database.DB, jwtSigningSecret: jwtSigningSecret}
-	linkManager = &LinkManager{db: database.DB}
+	/*
+		keystore, err = NewKVStore(kv)
+		if err != nil {
+			log.Fatalf("Failed to initialize keystore: %v", err)
+		}
+	*/
+	keystore = nil // Temporarily disable keystore usage
+	accountManager = &AccountManager{db: database, kv: keystore, jwtSigningSecret: jwtSigningSecret}
+	linkManager = &LinkManager{db: database, kv: keystore}
 	mux = http.NewServeMux()
 	registerRoutes()
 }
@@ -222,11 +192,9 @@ func Run(port int) {
 
 func Shutdown() {
 	if database != nil {
-		err := database.Close()
-		if err != nil {
-			log.Printf("Error closing database: %v", err)
-		} else {
-			log.Println("Database connection closed.")
-		}
+		database.Close()
+	}
+	if keystore != nil {
+		keystore.Close()
 	}
 }

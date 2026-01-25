@@ -23,9 +23,22 @@ func main() {
 	}()
 	dbFile := os.Getenv("DB_FILE")
 	jwtSecret := os.Getenv("JWT_SECRET")
-	if dbFile == "" || jwtSecret == "" {
-		log.Fatal("Environment variables DB_FILE and JWT_SECRET must be set")
+	if jwtSecret == "" {
+		log.Fatalln("Environment variables JWT_SECRET must be set")
 	}
-	cascade.Init(dbFile, jwtSecret)
+	if dbFile == "" {
+		log.Fatalln("Environment variable DB_FILE must be set")
+	}
+	dbConfig := cascade.DBConnection{
+		Address: dbFile,
+	}
+	kvAddress := os.Getenv("KV_ADDRESS")
+	if kvAddress == "" {
+		//	log.Fatalln("Environment variable KV_ADDRESS must be set")
+	}
+	kvConfig := cascade.KVConnection{
+		Address: kvAddress,
+	}
+	cascade.Init(dbConfig, kvConfig, jwtSecret)
 	cascade.Run(8080)
 }
