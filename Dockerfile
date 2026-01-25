@@ -1,8 +1,8 @@
 # Build stage
 FROM golang:1.25.6-alpine AS builder
 
-# Install build dependencies for CGO (required for SQLite)
-RUN apk add --no-cache gcc musl-dev sqlite-dev
+# Install make for building via Makefile
+RUN apk add --no-cache make
 
 WORKDIR /app
 
@@ -13,13 +13,11 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application
-RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o cascade cmd/cascade/main.go
+# Build the application using Makefile
+RUN CGO_ENABLED=0 make build && mv cascade.bin cascade
 
 # Final stage
 FROM alpine:latest
-
-RUN apk --no-cache add ca-certificates sqlite
 
 WORKDIR /root/
 
